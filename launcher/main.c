@@ -1,5 +1,5 @@
 /*
- * CHAIR launcher — starts audio-engine.exe and chair-overlay.exe,
+ * CHAIR launcher -- starts audio-engine.exe and chair-overlay.exe,
  * forwards CLI args to the engine, tears down both on exit.
  */
 #define WIN32_LEAN_AND_MEAN
@@ -117,8 +117,8 @@ int main(int argc, char **argv)
     }
 
     printf("\nCHAIR is running.\n");
-    printf("  Ctrl+Shift+Q  — close overlay\n");
-    printf("  Ctrl+C here   — stop everything\n\n");
+    printf("  Ctrl+Shift+Q  -- close overlay\n");
+    printf("  Ctrl+C here   -- stop everything\n\n");
 
     /* 4. Wait for either process to exit */
     HANDLE handles[2] = { g_engineProc, g_overlayProc };

@@ -109,7 +109,7 @@ int main(int argc, char* argv[]) {
     }
 
     printf("========================================\n");
-    printf("  CHAIR  Audio Engine  —  M3\n");
+    printf("  CHAIR  Audio Engine\n");
     printf("========================================\n\n");
 
     // --- Auto-detect VALORANT ---
@@ -167,6 +167,12 @@ int main(int argc, char* argv[]) {
     uint64_t totalFrames = 0;
     uint64_t totalEvents = 0;
 
+    // Auto-shutdown: exit after 5s of no events, or if VALORANT closes
+    const auto idleTimeout = std::chrono::seconds(5);
+    auto lastEventTime = std::chrono::steady_clock::now();
+    auto lastValCheck = std::chrono::steady_clock::now();
+    const bool wasValRunning = (targetPid != 0);
+
     while (g_running) {
         uint32_t frames = capture.captureFrames(buf.data(), bufFrames);
         if (frames == 0) continue;
@@ -189,10 +195,21 @@ int main(int argc, char* argv[]) {
             if (pipe)   pipe->send(eventToJson(e));
             if (logger) logger->markEvent(e);
 
+            lastEventTime = std::chrono::steady_clock::now();
             ++totalEvents;
         }
 
         if (logger) logger->tick();
+
+        // Check if VALORANT has closed (every 2s to avoid spam)
+        auto now = std::chrono::steady_clock::now();
+        if (wasValRunning && now - lastValCheck > std::chrono::seconds(2)) {
+            lastValCheck = now;
+            if (!findProcessByName(L"VALORANT.exe")) {
+                printf("[main] VALORANT closed -- shutting down.\n");
+                g_running = false;
+            }
+        }
     }
 
     capture.stop();
