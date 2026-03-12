@@ -18,12 +18,9 @@ public partial class MainWindow : Window
     private DispatcherTimer? _topmostTimer;
     private DispatcherTimer? _decayTimer;
 
-    // Edge bar persistence
-    private DateTime _leftExpiry = DateTime.MinValue;
-    private DateTime _rightExpiry = DateTime.MinValue;
-    private DateTime _centerExpiry = DateTime.MinValue;
-    private bool _leftIsHard;
-    private bool _rightIsHard;
+    // Direction ring: one indicator per direction
+    private DateTime[] _dirExpiry = new DateTime[5];
+    private UIElement[]? _dirIndicators;
 
     // Log lines: separate rolling logs per side
     private struct LogEntry
@@ -48,8 +45,8 @@ public partial class MainWindow : Window
     private const uint MOD_SHIFT = 0x0004;
     private const uint VK_Q      = 0x51;
 
-    private static readonly TimeSpan PersistDuration = TimeSpan.FromMilliseconds(800);
-    private static readonly TimeSpan FadeDuration = TimeSpan.FromMilliseconds(400);
+    private static readonly TimeSpan PersistDuration = TimeSpan.FromMilliseconds(400);
+    private static readonly TimeSpan FadeDuration = TimeSpan.FromMilliseconds(300);
     private static readonly TimeSpan LogPersist = TimeSpan.FromMilliseconds(2000);
 
     [DllImport("user32.dll")]
@@ -73,6 +70,11 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        // Map direction indices to XAML indicators
+        _dirIndicators = new UIElement[] {
+            DirHardLeft, DirLeft, DirCenter, DirRight, DirHardRight
+        };
+
         var hwnd = new WindowInteropHelper(this).Handle;
 
         int style = GetWindowLong(hwnd, GWL_EXSTYLE);
@@ -164,43 +166,38 @@ public partial class MainWindow : Window
         _ => "",
     };
 
+    private static int DirectionIndex(string dir) => dir switch
+    {
+        "hard_left"  => 0,
+        "left"       => 1,
+        "center"     => 2,
+        "right"      => 3,
+        "hard_right" => 4,
+        _ => -1,
+    };
+
     private void ShowEvent(AudioEventData evt)
     {
         var label = ClassDisplayName(evt.SoundClass);
         if (label is null) return;
 
         var now = DateTime.UtcNow;
-        var expiry = now + PersistDuration;
         bool isLeft = evt.Direction is "hard_left" or "left";
         bool isRight = evt.Direction is "hard_right" or "right";
-        bool isHard = evt.Direction is "hard_left" or "hard_right";
 
-        // --- Edge bars (persistent) ---
-        if (isLeft)
+        // --- Crosshair ring indicator ---
+        int dirIdx = DirectionIndex(evt.Direction);
+        if (dirIdx >= 0 && _dirIndicators != null)
         {
-            _leftExpiry = expiry;
-            _leftIsHard = isHard;
-            ShowBar(LeftHardIndicator, isHard);
-            ShowBar(LeftIndicator, !isHard);
-        }
-        else if (isRight)
-        {
-            _rightExpiry = expiry;
-            _rightIsHard = isHard;
-            ShowBar(RightHardIndicator, isHard);
-            ShowBar(RightIndicator, !isHard);
-        }
-        else // center
-        {
-            _centerExpiry = expiry;
-            ShowBar(CenterIndicator, true);
-            return; // center sounds = top bar only, no text label
+            _dirExpiry[dirIdx] = now + PersistDuration;
+            _dirIndicators[dirIdx].BeginAnimation(OpacityProperty, null);
+            _dirIndicators[dirIdx].Opacity = 1.0;
         }
 
-        // --- Positional text log ---
+        // --- Positional text log (left/right only, center = ring only) ---
+        if (!isLeft && !isRight) return;
+
         string arrow = DirectionArrow(evt.Direction);
-        // Left side: "<< STEPS" (arrow on outside edge)
-        // Right side: "STEPS >>" (arrow on outside edge)
         string logText = isLeft ? $"{arrow} {label}" : $"{label} {arrow}";
 
         if (isLeft)
@@ -216,14 +213,12 @@ public partial class MainWindow : Window
     {
         var now = DateTime.UtcNow;
 
-        // If newest line is same text and still visible, just extend
         if (log[0].Text == text && log[0].Expiry > now)
         {
             log[0].Expiry = expiry;
             return;
         }
 
-        // Shift down
         log[2] = log[1];
         log[1] = log[0];
         log[0] = new LogEntry { Text = text, Expiry = expiry };
@@ -245,35 +240,24 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ShowBar(System.Windows.UIElement bar, bool show)
-    {
-        if (!show) return;
-        bar.BeginAnimation(OpacityProperty, null);
-        bar.Opacity = 1.0;
-    }
-
     private void CheckDecay()
     {
         var now = DateTime.UtcNow;
 
-        // Edge bars
-        if (_leftExpiry != DateTime.MinValue && now > _leftExpiry)
+        // Direction ring indicators
+        if (_dirIndicators != null)
         {
-            FadeOut(_leftIsHard ? LeftHardIndicator : LeftIndicator);
-            _leftExpiry = DateTime.MinValue;
-        }
-        if (_rightExpiry != DateTime.MinValue && now > _rightExpiry)
-        {
-            FadeOut(_rightIsHard ? RightHardIndicator : RightIndicator);
-            _rightExpiry = DateTime.MinValue;
-        }
-        if (_centerExpiry != DateTime.MinValue && now > _centerExpiry)
-        {
-            FadeOut(CenterIndicator);
-            _centerExpiry = DateTime.MinValue;
+            for (int i = 0; i < 5; i++)
+            {
+                if (_dirExpiry[i] != DateTime.MinValue && now > _dirExpiry[i])
+                {
+                    FadeOut(_dirIndicators[i]);
+                    _dirExpiry[i] = DateTime.MinValue;
+                }
+            }
         }
 
-        // Log lines — both sides
+        // Log lines
         DecayLog(_leftLog, LeftLogLines());
         DecayLog(_rightLog, RightLogLines());
     }
@@ -291,7 +275,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void FadeOut(System.Windows.UIElement target)
+    private void FadeOut(UIElement target)
     {
         var anim = new DoubleAnimation(0.0, FadeDuration)
         {

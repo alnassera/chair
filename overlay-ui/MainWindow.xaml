@@ -21,72 +21,88 @@
             </Ellipse.Fill>
         </Ellipse>
 
-        <!-- HARD LEFT: thick bright bar, full screen edge -->
-        <Border x:Name="LeftHardIndicator"
-                HorizontalAlignment="Left" VerticalAlignment="Stretch"
-                Width="12" CornerRadius="0,6,6,0"
-                Opacity="0" Margin="0,40,0,40">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                    <GradientStop Color="#DDFF6B00" Offset="0"/>
-                    <GradientStop Color="#00FF6B00" Offset="1"/>
-                </LinearGradientBrush>
-            </Border.Background>
-        </Border>
+        <!--
+            Crosshair ring: 5 pill-shaped indicators on a semicircle (R=120px)
+            above/around screen center, 45 deg apart.
 
-        <!-- LEFT: medium bar -->
-        <Border x:Name="LeftIndicator"
-                HorizontalAlignment="Left" VerticalAlignment="Center"
-                Width="8" Height="300" CornerRadius="0,4,4,0"
-                Opacity="0" Margin="40,0,0,0">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                    <GradientStop Color="#AAFFB347" Offset="0"/>
-                    <GradientStop Color="#00FFB347" Offset="1"/>
-                </LinearGradientBrush>
-            </Border.Background>
-        </Border>
+            hard_left  180°  (-120,   0)  rotate  90°
+            left       135°  ( -85, -85)  rotate  45°
+            center      90°  (   0,-120)  rotate   0°
+            right       45°  (  85, -85)  rotate -45°
+            hard_right   0°  ( 120,   0)  rotate -90°
+        -->
+        <Canvas HorizontalAlignment="Center" VerticalAlignment="Center"
+                Width="0" Height="0" ClipToBounds="False">
 
-        <!-- HARD RIGHT: thick bright bar, full screen edge -->
-        <Border x:Name="RightHardIndicator"
-                HorizontalAlignment="Right" VerticalAlignment="Stretch"
-                Width="12" CornerRadius="6,0,0,6"
-                Opacity="0" Margin="0,40,0,40">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="1,0" EndPoint="0,0">
-                    <GradientStop Color="#DDFF6B00" Offset="0"/>
-                    <GradientStop Color="#00FF6B00" Offset="1"/>
-                </LinearGradientBrush>
-            </Border.Background>
-        </Border>
+            <!-- HARD LEFT -->
+            <Border x:Name="DirHardLeft" Canvas.Left="-145" Canvas.Top="-6"
+                    Width="50" Height="12" CornerRadius="6" Opacity="0">
+                <Border.RenderTransform>
+                    <RotateTransform Angle="90" CenterX="25" CenterY="6"/>
+                </Border.RenderTransform>
+                <Border.Background>
+                    <SolidColorBrush Color="#CCFFFFFF"/>
+                </Border.Background>
+                <Border.Effect>
+                    <DropShadowEffect ShadowDepth="0" BlurRadius="6" Color="Black" Opacity="0.9"/>
+                </Border.Effect>
+            </Border>
 
-        <!-- RIGHT: medium bar -->
-        <Border x:Name="RightIndicator"
-                HorizontalAlignment="Right" VerticalAlignment="Center"
-                Width="8" Height="300" CornerRadius="4,0,0,4"
-                Opacity="0" Margin="0,0,40,0">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="1,0" EndPoint="0,0">
-                    <GradientStop Color="#AAFFB347" Offset="0"/>
-                    <GradientStop Color="#00FFB347" Offset="1"/>
-                </LinearGradientBrush>
-            </Border.Background>
-        </Border>
+            <!-- LEFT -->
+            <Border x:Name="DirLeft" Canvas.Left="-110" Canvas.Top="-91"
+                    Width="50" Height="12" CornerRadius="6" Opacity="0">
+                <Border.RenderTransform>
+                    <RotateTransform Angle="45" CenterX="25" CenterY="6"/>
+                </Border.RenderTransform>
+                <Border.Background>
+                    <SolidColorBrush Color="#CCFFFFFF"/>
+                </Border.Background>
+                <Border.Effect>
+                    <DropShadowEffect ShadowDepth="0" BlurRadius="6" Color="Black" Opacity="0.9"/>
+                </Border.Effect>
+            </Border>
 
-        <!-- CENTER: top bar -->
-        <Border x:Name="CenterIndicator"
-                HorizontalAlignment="Center" VerticalAlignment="Top"
-                Width="300" Height="10" CornerRadius="0,0,5,5"
-                Opacity="0" Margin="0,0,0,0">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="#CCFF6B00" Offset="0"/>
-                    <GradientStop Color="#00FF6B00" Offset="1"/>
-                </LinearGradientBrush>
-            </Border.Background>
-        </Border>
+            <!-- CENTER -->
+            <Border x:Name="DirCenter" Canvas.Left="-25" Canvas.Top="-126"
+                    Width="50" Height="12" CornerRadius="6" Opacity="0">
+                <Border.Background>
+                    <SolidColorBrush Color="#CCFFFFFF"/>
+                </Border.Background>
+                <Border.Effect>
+                    <DropShadowEffect ShadowDepth="0" BlurRadius="6" Color="Black" Opacity="0.9"/>
+                </Border.Effect>
+            </Border>
 
-        <!-- Left event log: bottom-left, for left/hard_left sounds -->
+            <!-- RIGHT -->
+            <Border x:Name="DirRight" Canvas.Left="60" Canvas.Top="-91"
+                    Width="50" Height="12" CornerRadius="6" Opacity="0">
+                <Border.RenderTransform>
+                    <RotateTransform Angle="-45" CenterX="25" CenterY="6"/>
+                </Border.RenderTransform>
+                <Border.Background>
+                    <SolidColorBrush Color="#CCFFFFFF"/>
+                </Border.Background>
+                <Border.Effect>
+                    <DropShadowEffect ShadowDepth="0" BlurRadius="6" Color="Black" Opacity="0.9"/>
+                </Border.Effect>
+            </Border>
+
+            <!-- HARD RIGHT -->
+            <Border x:Name="DirHardRight" Canvas.Left="95" Canvas.Top="-6"
+                    Width="50" Height="12" CornerRadius="6" Opacity="0">
+                <Border.RenderTransform>
+                    <RotateTransform Angle="-90" CenterX="25" CenterY="6"/>
+                </Border.RenderTransform>
+                <Border.Background>
+                    <SolidColorBrush Color="#CCFFFFFF"/>
+                </Border.Background>
+                <Border.Effect>
+                    <DropShadowEffect ShadowDepth="0" BlurRadius="6" Color="Black" Opacity="0.9"/>
+                </Border.Effect>
+            </Border>
+        </Canvas>
+
+        <!-- Left event log: bottom-left -->
         <StackPanel x:Name="LeftEventLog"
                     HorizontalAlignment="Left" VerticalAlignment="Bottom"
                     Margin="60,0,0,60">
@@ -113,7 +129,7 @@
             </TextBlock>
         </StackPanel>
 
-        <!-- Right event log: bottom-right, for right/hard_right sounds -->
+        <!-- Right event log: bottom-right -->
         <StackPanel x:Name="RightEventLog"
                     HorizontalAlignment="Right" VerticalAlignment="Bottom"
                     Margin="0,0,60,60">

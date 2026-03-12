@@ -78,6 +78,7 @@ static void printUsage() {
     printf("  --log [dir]   Enable clip logging (default dir: ./clips)\n");
     printf("  --no-pipe     Disable IPC pipe\n");
     printf("  --mix         Capture all audio (skip VALORANT auto-detect)\n");
+    printf("  --device NAME Capture from a specific audio device (e.g. \"CABLE\" for VB-CABLE)\n");
     printf("  --help        Show this message\n");
 }
 
@@ -92,6 +93,7 @@ int main(int argc, char* argv[]) {
     bool enablePipe = true;
     bool forceMix   = false;
     std::string logBaseDir = "./clips";
+    std::string deviceName;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--log") == 0) {
@@ -102,6 +104,9 @@ int main(int argc, char* argv[]) {
             enablePipe = false;
         } else if (strcmp(argv[i], "--mix") == 0) {
             forceMix = true;
+        } else if (strcmp(argv[i], "--device") == 0) {
+            if (i + 1 < argc)
+                deviceName = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
             printUsage();
             return 0;
@@ -125,8 +130,12 @@ int main(int argc, char* argv[]) {
         printf("[main] --mix flag: capturing all audio\n");
     }
 
+    if (!deviceName.empty()) {
+        printf("[main] Using device: \"%s\"\n", deviceName.c_str());
+    }
+
     WasapiCapture capture;
-    if (!capture.initialize(targetPid)) {
+    if (!capture.initialize(targetPid, deviceName)) {
         fprintf(stderr, "Fatal: could not initialize audio capture.\n");
         return 1;
     }

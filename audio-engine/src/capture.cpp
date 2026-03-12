@@ -10,8 +10,11 @@
 #include <tlhelp32.h>
 #include <propidl.h>
 
+#include <functiondiscoverykeys_devpkey.h>
+
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 // KSDATAFORMAT_SUBTYPE GUIDs — defined manually for MinGW
 // {00000003-0000-0010-8000-00AA00389B71}
@@ -184,8 +187,9 @@ bool WasapiCapture::isProcessSpecific() const {
 // Main initialize — try process-specific, fall back to full mix
 // ---------------------------------------------------------------------------
 
-bool WasapiCapture::initialize(uint32_t targetPid) {
-    if (targetPid != 0) {
+bool WasapiCapture::initialize(uint32_t targetPid, const std::string& deviceSubstr) {
+    // If a specific device is requested (e.g. virtual audio cable), skip process loopback
+    if (targetPid != 0 && deviceSubstr.empty()) {
         printf("[capture] Attempting process-specific loopback for PID %u...\n", targetPid);
         fflush(stdout);
 
@@ -204,21 +208,21 @@ bool WasapiCapture::initialize(uint32_t targetPid) {
         fflush(stdout);
     }
 
-    // Full mix path — initialize COM here
+    // Full mix / specific device path — initialize COM here
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
         fprintf(stderr, "[capture] CoInitializeEx failed: 0x%08lx\n", hr);
         return false;
     }
 
-    return initFullMixLoopback();
+    return initFullMixLoopback(deviceSubstr);
 }
 
 // ---------------------------------------------------------------------------
 // Full-mix loopback (original code path)
 // ---------------------------------------------------------------------------
 
-bool WasapiCapture::initFullMixLoopback() {
+bool WasapiCapture::initFullMixLoopback(const std::string& deviceSubstr) {
     HRESULT hr;
 
     hr = CoCreateInstance(
@@ -229,11 +233,71 @@ bool WasapiCapture::initFullMixLoopback() {
         return false;
     }
 
-    hr = m_impl->enumerator->GetDefaultAudioEndpoint(
-        eRender, eConsole, &m_impl->device);
-    if (FAILED(hr)) {
-        fprintf(stderr, "[capture] GetDefaultAudioEndpoint failed: 0x%08lx\n", hr);
-        return false;
+    if (!deviceSubstr.empty()) {
+        // Find device by substring match on its friendly name
+        IMMDeviceCollection* devices = nullptr;
+        hr = m_impl->enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices);
+        if (FAILED(hr)) {
+            fprintf(stderr, "[capture] EnumAudioEndpoints failed: 0x%08lx\n", hr);
+            return false;
+        }
+
+        UINT count = 0;
+        devices->GetCount(&count);
+        bool found = false;
+
+        printf("[capture] Searching for device matching \"%s\"...\n", deviceSubstr.c_str());
+        for (UINT i = 0; i < count; ++i) {
+            IMMDevice* dev = nullptr;
+            devices->Item(i, &dev);
+            if (!dev) continue;
+
+            IPropertyStore* props = nullptr;
+            dev->OpenPropertyStore(STGM_READ, &props);
+            if (props) {
+                PROPVARIANT name;
+                PropVariantInit(&name);
+                props->GetValue(PKEY_Device_FriendlyName, &name);
+                if (name.vt == VT_LPWSTR && name.pwszVal) {
+                    // Convert wide string to narrow for comparison
+                    char narrow[256];
+                    WideCharToMultiByte(CP_UTF8, 0, name.pwszVal, -1, narrow, sizeof(narrow), nullptr, nullptr);
+
+                    // Case-insensitive substring search
+                    std::string devName(narrow);
+                    std::string needle(deviceSubstr);
+                    for (auto& c : devName) c = (char)tolower(c);
+                    for (auto& c : needle) c = (char)tolower(c);
+
+                    if (devName.find(needle) != std::string::npos) {
+                        printf("[capture] Found device: %s\n", narrow);
+                        m_impl->device = dev;
+                        found = true;
+                        PropVariantClear(&name);
+                        props->Release();
+                        break;
+                    } else {
+                        printf("[capture]   skip: %s\n", narrow);
+                    }
+                }
+                PropVariantClear(&name);
+                props->Release();
+            }
+            dev->Release();
+        }
+        devices->Release();
+
+        if (!found) {
+            fprintf(stderr, "[capture] No device matching \"%s\" found.\n", deviceSubstr.c_str());
+            return false;
+        }
+    } else {
+        hr = m_impl->enumerator->GetDefaultAudioEndpoint(
+            eRender, eConsole, &m_impl->device);
+        if (FAILED(hr)) {
+            fprintf(stderr, "[capture] GetDefaultAudioEndpoint failed: 0x%08lx\n", hr);
+            return false;
+        }
     }
 
     hr = m_impl->device->Activate(
@@ -371,7 +435,7 @@ bool WasapiCapture::initProcessLoopback(uint32_t pid) {
     CloseHandle(thread);
 
     if (FAILED(data.result) || !data.client) {
-        fprintf(stderr, "[capture] Process loopback activation failed: 0x%08lx\n", data.result);
+        printf("[capture] Process loopback not available (0x%08lx) -- falling back to full mix\n", data.result);
         return false;
     }
 

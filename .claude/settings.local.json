@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(which g++ && g++ --version 2>&1 | head -3)",
+      "Bash(pacman -Q mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake)",
+      "Read(//mingw64/bin/**)"
+    ]
+  }
+}
