@@ -1,0 +1,16 @@
+# Build outputs
+audio-engine/build/
+overlay-ui/bin/
+overlay-ui/obj/
+launcher/chair.exe
+dist/
+
+# IDE
+.vs/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
