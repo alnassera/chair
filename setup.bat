@@ -122,15 +122,17 @@ echo  ============================================
 echo   Setup complete!
 echo  ============================================
 echo.
-echo   To run CHAIR:
-echo     chair.exe --device "CABLE"
+echo   From now on, just double-click chair.exe to run CHAIR.
+echo   (It automatically uses VB-CABLE)
 echo.
 echo   Controls:
 echo     Ctrl+Shift+Q  - close overlay
 echo     Ctrl+C        - stop engine
 echo.
+echo   You can minimize the CHAIR window while playing.
+echo.
 
 set /p LAUNCH="  Launch CHAIR now? (Y/N): "
 if /i "%LAUNCH%"=="Y" (
-    start "" "%~dp0chair.exe" --device "CABLE"
+    start "" "%~dp0chair.exe"
 )

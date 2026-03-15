@@ -61,31 +61,46 @@ int main(int argc, char **argv)
     if (lastSlash) *lastSlash = '\0';
 
     /* Build extra args string for the engine (forward everything after argv[0]) */
+    /* Default to --device CABLE if no args given (most common setup) */
     char engineArgs[2048] = {0};
-    for (int i = 1; i < argc; i++)
+    if (argc <= 1)
     {
-        if (i > 1) strcat(engineArgs, " ");
-        /* Quote args that contain spaces */
-        if (strchr(argv[i], ' '))
+        strcpy(engineArgs, "--device CABLE --mix");
+    }
+    else
+    {
+        for (int i = 1; i < argc; i++)
         {
-            strcat(engineArgs, "\"");
-            strcat(engineArgs, argv[i]);
-            strcat(engineArgs, "\"");
-        }
-        else
-        {
-            strcat(engineArgs, argv[i]);
+            if (i > 1) strcat(engineArgs, " ");
+            if (strchr(argv[i], ' '))
+            {
+                strcat(engineArgs, "\"");
+                strcat(engineArgs, argv[i]);
+                strcat(engineArgs, "\"");
+            }
+            else
+            {
+                strcat(engineArgs, argv[i]);
+            }
         }
     }
 
     SetConsoleCtrlHandler(CtrlHandler, TRUE);
     SetConsoleTitleA("CHAIR");
 
-    printf("CHAIR - Audio Direction Overlay\n");
-    printf("===============================\n\n");
+    printf("\n");
+    printf("  ========================================\n");
+    printf("   CHAIR - Audio Direction Overlay\n");
+    printf("  ========================================\n\n");
+
+    if (argc <= 1)
+        printf("  Using default: --device CABLE --mix\n");
+    else
+        printf("  Args: %s\n", engineArgs);
+    printf("\n");
 
     /* 1. Launch audio engine (gets its own console window) */
-    printf("Starting audio engine...\n");
+    printf("  Starting audio engine...\n");
     g_engineProc = Launch(exePath, "audio-engine.exe", engineArgs, FALSE);
     if (!g_engineProc)
     {
@@ -100,14 +115,18 @@ int main(int argc, char **argv)
     DWORD exitCode;
     if (GetExitCodeProcess(g_engineProc, &exitCode) && exitCode != STILL_ACTIVE)
     {
-        fprintf(stderr, "Audio engine exited immediately (code %lu). Check your audio setup.\n", exitCode);
+        fprintf(stderr, "\n  Audio engine failed to start (code %lu).\n", exitCode);
+        fprintf(stderr, "  Make sure you've run setup.bat first.\n");
+        fprintf(stderr, "  If VB-CABLE isn't installed, get it from: https://vb-audio.com/Cable/\n\n");
+        fprintf(stderr, "  Press any key to exit...\n");
         CloseHandle(g_engineProc);
         g_engineProc = NULL;
+        system("pause >nul");
         return 1;
     }
 
     /* 3. Launch overlay (no console window — it's a WPF GUI) */
-    printf("Starting overlay...\n");
+    printf("  Starting overlay...\n");
     g_overlayProc = Launch(exePath, "chair-overlay.exe", NULL, TRUE);
     if (!g_overlayProc)
     {
@@ -116,7 +135,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("\nCHAIR is running.\n");
+    printf("\n  CHAIR is running!\n");
+    printf("  You can minimize this window.\n\n");
     printf("  Ctrl+Shift+Q  -- close overlay\n");
     printf("  Ctrl+C here   -- stop everything\n\n");
 
