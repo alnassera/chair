@@ -1,0 +1,139 @@
+<Window x:Class="ChairOverlay.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CHAIR Settings"
+        Width="380" Height="620"
+        WindowStyle="SingleBorderWindow"
+        ResizeMode="NoResize"
+        Background="#1A1A2E"
+        Foreground="#E0E0E0"
+        Topmost="True">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#C0C0C0"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,0,0,2"/>
+        </Style>
+        <Style TargetType="Slider">
+            <Setter Property="Margin" Value="0,0,0,12"/>
+            <Setter Property="Foreground" Value="#7B68EE"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="Value">
+            <Setter Property="Foreground" Value="#7B68EE"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="Margin" Value="0,0,0,2"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="Section">
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,8,0,6"/>
+        </Style>
+    </Window.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="20,16">
+        <StackPanel>
+            <TextBlock Text="CHAIR" FontSize="20" FontWeight="Bold" Foreground="White" Margin="0,0,0,4"/>
+            <TextBlock Text="Adjust overlay in real-time" Foreground="#808080" Margin="0,0,0,16"/>
+
+            <!-- Ring -->
+            <TextBlock Text="RING" Style="{StaticResource Section}"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Circle radius"/>
+                <TextBlock x:Name="ValRadius" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlRadius" Minimum="40" Maximum="300" Value="120"
+                    ValueChanged="OnSliderChanged" Tag="RadiusBase"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Arc opacity"/>
+                <TextBlock x:Name="ValArcOpacity" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlArcOpacity" Minimum="0" Maximum="1" Value="0.13"
+                    ValueChanged="OnSliderChanged" Tag="ArcOpacity"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Stroke thickness"/>
+                <TextBlock x:Name="ValStroke" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlStroke" Minimum="0.5" Maximum="6" Value="2.5"
+                    ValueChanged="OnSliderChanged" Tag="StrokeThickness"/>
+
+            <!-- Spike -->
+            <TextBlock Text="SPIKE" Style="{StaticResource Section}"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Max height (px)"/>
+                <TextBlock x:Name="ValSpikeMax" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlSpikeMax" Minimum="10" Maximum="250" Value="70"
+                    ValueChanged="OnSliderChanged" Tag="SpikeMax"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Width (degrees)"/>
+                <TextBlock x:Name="ValSpikeWidth" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlSpikeWidth" Minimum="1" Maximum="30" Value="5"
+                    ValueChanged="OnSliderChanged" Tag="SpikeWidth"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Decay rate"/>
+                <TextBlock x:Name="ValDecay" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlDecay" Minimum="0.1" Maximum="0.95" Value="0.6"
+                    ValueChanged="OnSliderChanged" Tag="DecayRate"/>
+
+            <!-- Sensitivity -->
+            <TextBlock Text="SENSITIVITY" Style="{StaticResource Section}"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="dB floor"/>
+                <TextBlock x:Name="ValDbFloor" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlDbFloor" Minimum="-60" Maximum="0" Value="-30"
+                    ValueChanged="OnSliderChanged" Tag="DbFloor"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="dB ceiling"/>
+                <TextBlock x:Name="ValDbCeil" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlDbCeil" Minimum="-30" Maximum="20" Value="0"
+                    ValueChanged="OnSliderChanged" Tag="DbCeil"/>
+
+            <!-- Tracking -->
+            <TextBlock Text="TRACKING" Style="{StaticResource Section}"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Angle speed"/>
+                <TextBlock x:Name="ValAngleSmooth" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlAngleSmooth" Minimum="0.01" Maximum="1" Value="0.5"
+                    ValueChanged="OnSliderChanged" Tag="AngleSmooth"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Center deadzone (deg)"/>
+                <TextBlock x:Name="ValDeadzone" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlDeadzone" Minimum="0" Maximum="45" Value="15"
+                    ValueChanged="OnSliderChanged" Tag="CenterDeadzone"/>
+
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="50"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Center smoothing"/>
+                <TextBlock x:Name="ValCenterSmooth" Grid.Column="1" Style="{StaticResource Value}"/>
+            </Grid>
+            <Slider x:Name="SlCenterSmooth" Minimum="0.01" Maximum="0.5" Value="0.15"
+                    ValueChanged="OnSliderChanged" Tag="CenterSmooth"/>
+
+            <!-- Reset -->
+            <Button Content="Reset to defaults" Margin="0,16,0,0" Padding="8,6"
+                    Background="#2A2A4A" Foreground="#C0C0C0" BorderBrush="#444"
+                    Click="OnReset"/>
+        </StackPanel>
+    </ScrollViewer>
+</Window>

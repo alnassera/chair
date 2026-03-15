@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
 
@@ -7,130 +6,48 @@ namespace ChairOverlay;
 
 public class PolarRingControl : FrameworkElement
 {
-    private const double R_BASE = 210.0;
-    private const double MAX_SPIKE = 90.0;
-    private const double DB_FLOOR = -30.0;
-    private const double DB_CEIL = 0.0;
-    private const double SPLAT_SIGMA = 5.0;
-    private const double FALL_RATE = 0.85;
-    private const double ANGLE_SMOOTH = 0.06;
-    private const double AMP_SMOOTH = 0.3;
-    private const double SPLIT_ANGLE = 30.0;    // degrees apart to spawn a second spike
+    // Tunable properties — updated by settings UI
+    public double RadiusBase { get; set; } = 120.0;
+    public double SpikeMax { get; set; } = 100.0;
+    public double DbFloor { get; set; } = -30.0;
+    public double DbCeil { get; set; } = 0.0;
+    public double SpikeWidth { get; set; } = 5.0;
+    public double DecayRate { get; set; } = 0.85;
+    public double AttackSmooth { get; set; } = 0.4;
+    public double AngleSmooth { get; set; } = 0.5;
+    public double CenterDeadzone { get; set; } = 15.0;
+    public double CenterSmooth { get; set; } = 0.15;
+    public double StrokeThickness { get; set; } = 2.5;
+    public double ArcOpacity { get; set; } = 0.13;
 
-    private static readonly Pen RingPen = new(new SolidColorBrush(Color.FromArgb(0x20, 0xFF, 0xFF, 0xFF)), 1.0);
-    private static readonly Pen BulgePen = new(new SolidColorBrush(Color.FromArgb(0xDD, 0xFF, 0xFF, 0xFF)), 2.5);
-
-    static PolarRingControl()
-    {
-        RingPen.Brush.Freeze(); RingPen.Freeze();
-        BulgePen.Brush.Freeze(); BulgePen.Freeze();
-    }
-
-    private readonly double[] _energy = new double[360];
-
-    private class Tracker
-    {
-        public double Angle;
-        public double Amplitude;
-    }
-
-    private readonly List<Tracker> _trackers = new();
+    private readonly double[] _energy = new double[180];
+    private double _angle = 90.0;
+    private double _amp = 0.0;
 
     public void Push(float angleDeg, float energyDb, float confidence)
     {
-        double t = Math.Clamp((energyDb - DB_FLOOR) / (DB_CEIL - DB_FLOOR), 0.0, 1.0);
-        double amplitude = t * MAX_SPIKE;
+        double t = Math.Clamp((energyDb - DbFloor) / (DbCeil - DbFloor), 0.0, 1.0);
+        double amplitude = t * SpikeMax;
         if (amplitude < 1.0) return;
 
-        // Find the closest tracker
-        Tracker? closest = null;
-        double closestDist = double.MaxValue;
-        foreach (var tr in _trackers)
-        {
-            double diff = angleDeg - tr.Angle;
-            while (diff > 180.0) diff -= 360.0;
-            while (diff < -180.0) diff += 360.0;
-            double dist = Math.Abs(diff);
-            if (dist < closestDist)
-            {
-                closestDist = dist;
-                closest = tr;
-            }
-        }
+        double angle = Math.Clamp((double)angleDeg, 0.0, 180.0);
 
-        if (closest != null && closestDist < SPLIT_ANGLE)
-        {
-            // Update existing tracker
-            double diff = angleDeg - closest.Angle;
-            while (diff > 180.0) diff -= 360.0;
-            while (diff < -180.0) diff += 360.0;
-            closest.Angle += diff * ANGLE_SMOOTH;
-            while (closest.Angle < 0) closest.Angle += 360.0;
-            while (closest.Angle >= 360) closest.Angle -= 360.0;
+        double distFromCenter = Math.Abs(_angle - 90.0);
+        double smooth = distFromCenter < CenterDeadzone ? CenterSmooth : AngleSmooth;
 
-            if (amplitude > closest.Amplitude)
-                closest.Amplitude += (amplitude - closest.Amplitude) * AMP_SMOOTH;
-        }
-        else
-        {
-            // New source — spawn tracker (max 4)
-            if (_trackers.Count >= 4)
-            {
-                // Replace weakest
-                Tracker? weakest = _trackers[0];
-                foreach (var tr in _trackers)
-                    if (tr.Amplitude < weakest.Amplitude) weakest = tr;
-                weakest.Angle = angleDeg;
-                weakest.Amplitude = amplitude;
-            }
-            else
-            {
-                _trackers.Add(new Tracker { Angle = angleDeg, Amplitude = amplitude });
-            }
-        }
+        _angle += (angle - _angle) * smooth;
+        _angle = Math.Clamp(_angle, 0.0, 180.0);
 
-        // Rebuild energy ring from all trackers
-        for (int i = 0; i < 360; i++)
-            _energy[i] *= 0.7;
+        // Smooth rise instead of instant snap — blends consecutive events
+        if (amplitude > _amp)
+            _amp += (amplitude - _amp) * AttackSmooth;
 
-        foreach (var tr in _trackers)
-        {
-            if (tr.Amplitude < 0.5) continue;
-            int center = ((int)Math.Round(tr.Angle)) % 360;
-            if (center < 0) center += 360;
-            int spread = (int)Math.Ceiling(SPLAT_SIGMA * 3.0);
-
-            for (int offset = -spread; offset <= spread; offset++)
-            {
-                int idx = (center + offset + 360) % 360;
-                double g = tr.Amplitude * Math.Exp(-0.5 * (offset / SPLAT_SIGMA) * (offset / SPLAT_SIGMA));
-                if (g > _energy[idx])
-                    _energy[idx] = g;
-            }
-        }
-
-        InvalidateVisual();
     }
 
     public void Tick()
     {
-        bool any = false;
-        for (int i = 0; i < 360; i++)
-        {
-            _energy[i] *= FALL_RATE;
-            if (_energy[i] < 0.3) _energy[i] = 0.0;
-            else any = true;
-        }
-
-        // Decay trackers, remove dead ones
-        for (int i = _trackers.Count - 1; i >= 0; i--)
-        {
-            _trackers[i].Amplitude *= FALL_RATE;
-            if (_trackers[i].Amplitude < 0.3)
-                _trackers.RemoveAt(i);
-        }
-
-        if (any) InvalidateVisual();
+        _amp *= DecayRate;
+        InvalidateVisual();
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -138,28 +55,55 @@ public class PolarRingControl : FrameworkElement
         double cx = ActualWidth / 2.0;
         double cy = ActualHeight / 2.0;
 
-        dc.DrawEllipse(null, RingPen, new Point(cx, cy), R_BASE, R_BASE);
+        // Pens rebuilt from current property values
+        var arcPen = new Pen(new SolidColorBrush(Color.FromArgb((byte)(ArcOpacity * 255), 0xFF, 0xFF, 0xFF)), 1.0);
+        var bulgePen = new Pen(new SolidColorBrush(Color.FromArgb(0xDD, 0xFF, 0xFF, 0xFF)), StrokeThickness);
 
-        bool any = false;
-        for (int i = 0; i < 360; i++)
-            if (_energy[i] > 0.3) { any = true; break; }
-        if (!any) return;
+        // Semicircle arc
+        var arcGeo = new StreamGeometry();
+        using (var ctx = arcGeo.Open())
+        {
+            for (int deg = 0; deg <= 180; deg++)
+            {
+                double rad = deg * Math.PI / 180.0;
+                var pt = new Point(cx + RadiusBase * Math.Cos(rad), cy - RadiusBase * Math.Sin(rad));
+                if (deg == 0) ctx.BeginFigure(pt, false, false);
+                else ctx.LineTo(pt, true, true);
+            }
+        }
+        arcGeo.Freeze();
+        dc.DrawGeometry(null, arcPen, arcGeo);
 
+        if (_amp < 0.5) return;
+
+        // Render a single spike directly from tracked angle + amplitude
+        // No energy array accumulation — prevents ghost spikes from angle jitter
         var geo = new StreamGeometry();
         using (var ctx = geo.Open())
         {
-            for (int deg = 0; deg <= 360; deg++)
+            int center = (int)Math.Round(Math.Clamp(_angle, 0.0, 179.0));
+            int spread = (int)Math.Ceiling(SpikeWidth * 3.0);
+            int lo = Math.Max(0, center - spread);
+            int hi = Math.Min(180, center + spread);
+
+            for (int deg = 0; deg <= 180; deg++)
             {
-                int idx = deg % 360;
-                double r = R_BASE + _energy[idx];
-                double rad = idx * Math.PI / 180.0;
+                double spike = 0.0;
+                if (deg >= lo && deg <= hi)
+                {
+                    double offset = deg - _angle;
+                    spike = _amp * Math.Exp(-0.5 * (offset / SpikeWidth) * (offset / SpikeWidth));
+                }
+
+                double r = RadiusBase + spike;
+                double rad = deg * Math.PI / 180.0;
                 var pt = new Point(cx + r * Math.Cos(rad), cy - r * Math.Sin(rad));
 
-                if (deg == 0) ctx.BeginFigure(pt, false, true);
+                if (deg == 0) ctx.BeginFigure(pt, false, false);
                 else ctx.LineTo(pt, true, true);
             }
         }
         geo.Freeze();
-        dc.DrawGeometry(null, BulgePen, geo);
+        dc.DrawGeometry(null, bulgePen, geo);
     }
 }

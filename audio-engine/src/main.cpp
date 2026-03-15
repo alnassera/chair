@@ -19,7 +19,7 @@
 static std::atomic<bool> g_running{true};
 
 // Energy gate: bands below this are not sent to overlay (filters ambient noise)
-static constexpr float ENERGY_GATE_DB = -10.0f;    // soft gate center — full pass above, attenuated below
+static constexpr float ENERGY_GATE_DB = -5.0f;     // soft gate center — full pass above, attenuated below
 static constexpr float GATE_KNEE_DB  = 15.0f;     // soft knee width — fades over this range below gate
 static constexpr float CONF_GATE = 0.0f;           // disabled — let everything through
 static constexpr uint32_t MIN_BAND = 2;            // skip bands 0-1 (100Hz-500Hz) — ambient rumble
@@ -45,19 +45,35 @@ static const char* directionGlyph(AudioEvent::Direction d) {
 
 /// Cluster bands by angular proximity, return one JSON per cluster.
 /// Supports multiple simultaneous sound sources.
-static constexpr float CLUSTER_ANGLE = 30.0f;
+static float CLUSTER_ANGLE = 30.0f;  // first pass: merge bands within this angle
+static float MERGE_ANGLE   = 25.0f;  // second pass: collapse clusters that drifted close
 
 struct Cluster {
     float weightSum = 0.0f;
     float angleSum  = 0.0f;
     float maxDb     = -999.0f;
     float maxConf   = 0.0f;
+    float angle() const { return angleSum / weightSum; }
+    void absorb(const Cluster& o) {
+        angleSum  += o.angleSum;
+        weightSum += o.weightSum;
+        if (o.maxDb   > maxDb)   maxDb   = o.maxDb;
+        if (o.maxConf > maxConf) maxConf = o.maxConf;
+    }
 };
 
 // Center suppression state
 static float centerGain = 1.0f;
 
+static constexpr float OUTPUT_DEBOUNCE_MS = 100.0f;  // min time between outputs
+static auto lastOutputTime = std::chrono::steady_clock::now();
+
 static std::string aggregateReadingsToJson(const std::vector<BandReading>& readings) {
+    // Temporal debounce: don't flood overlay with readings from one long sound
+    auto now = std::chrono::steady_clock::now();
+    float elapsedMs = std::chrono::duration<float, std::milli>(now - lastOutputTime).count();
+    if (elapsedMs < OUTPUT_DEBOUNCE_MS) return {};
+
     // Gate and collect passing readings
     struct GatedReading { float angle, db, conf, weight; };
     std::vector<GatedReading> gated;
@@ -81,64 +97,57 @@ static std::string aggregateReadingsToJson(const std::vector<BandReading>& readi
 
     if (gated.empty()) return {};
 
-    // Cluster by angular proximity
-    std::vector<Cluster> clusters;
+    // Require at least 2 bands — single band ILD is too noisy to trust
+    if (gated.size() < 2) {
+        printf("  [SKIP] bands=%zu (need 2+)\n", gated.size());
+        return {};
+    }
+
+    // Compute weighted mean angle
+    float wSum = 0.0f, wAngleSum = 0.0f;
     for (auto& g : gated) {
-        bool merged = false;
-        for (auto& c : clusters) {
-            float cAngle = c.angleSum / c.weightSum;
-            float diff = fabsf(g.angle - cAngle);
-            if (diff > 180.0f) diff = 360.0f - diff;
-            if (diff < CLUSTER_ANGLE) {
-                c.weightSum += g.weight;
-                c.angleSum  += g.angle * g.weight;
-                if (g.db > c.maxDb) c.maxDb = g.db;
-                if (g.conf > c.maxConf) c.maxConf = g.conf;
-                merged = true;
-                break;
-            }
-        }
-        if (!merged) {
-            Cluster c;
-            c.weightSum = g.weight;
-            c.angleSum  = g.angle * g.weight;
-            c.maxDb     = g.db;
-            c.maxConf   = g.conf;
-            clusters.push_back(c);
-        }
+        wSum      += g.weight;
+        wAngleSum += g.angle * g.weight;
+    }
+    float wMean = wAngleSum / wSum;
+
+    // Check max deviation: if ANY band is far from the mean, it's noise
+    static constexpr float MAX_DEV = 25.0f;
+    float maxDev = 0.0f;
+    for (auto& g : gated) {
+        float d = fabsf(g.angle - wMean);
+        if (d > maxDev) maxDev = d;
     }
 
-    // Build JSON array
-    std::string json;
-    bool first = true;
-    for (auto& c : clusters) {
-        float avgAngle = c.angleSum / c.weightSum;
-
-        // Center suppression
-        static constexpr float CENTER_ZONE = 20.0f;
-        static constexpr float CENTER_DECAY = 0.92f;
-        static constexpr float CENTER_RECOVER = 1.05f;
-
-        float distFromCenter = fabsf(avgAngle - 90.0f);
-        // Only suppress center for the dominant cluster
-        float db = c.maxDb;
-        if (distFromCenter < CENTER_ZONE) {
-            centerGain *= CENTER_DECAY;
-            if (centerGain < 0.05f) centerGain = 0.05f;
-            db += 20.0f * log10f(centerGain + 1e-10f);
-        } else {
-            centerGain *= CENTER_RECOVER;
-            if (centerGain > 1.0f) centerGain = 1.0f;
-        }
-
-        if (!first) json += '\n';
-        char buf[128];
-        snprintf(buf, sizeof(buf), R"({"a":%.1f,"e":%.1f,"c":%.2f})",
-                 avgAngle, db, c.maxConf);
-        json += buf;
-        first = false;
+    if (maxDev > MAX_DEV) {
+        printf("  [SKIP] bands=%zu mean=%.1f maxdev=%.1f |", gated.size(), wMean, maxDev);
+        for (auto& g : gated) printf(" %.0f", g.angle);
+        printf("\n");
+        return {};
     }
-    return json;
+
+    // Bands agree — output single weighted-average cluster
+    Cluster c;
+    for (auto& g : gated) {
+        c.weightSum += g.weight;
+        c.angleSum  += g.angle * g.weight;
+        if (g.db > c.maxDb) c.maxDb = g.db;
+        if (g.conf > c.maxConf) c.maxConf = g.conf;
+    }
+
+    float avgAngle = c.angle();
+    float db = c.maxDb;
+
+    printf("  [PASS] bands=%zu mean=%.1f maxdev=%.1f |", gated.size(), wMean, maxDev);
+    for (auto& g : gated) printf(" %.0f", g.angle);
+    printf("\n");
+
+    lastOutputTime = now;
+
+    char buf[128];
+    snprintf(buf, sizeof(buf), R"({"a":%.1f,"e":%.1f,"c":%.2f})",
+             avgAngle, db, c.maxConf);
+    return std::string(buf);
 }
 
 static std::string makeSessionDir(const std::string& baseDir) {
@@ -160,6 +169,8 @@ static void printUsage() {
     printf("  --no-pipe     Disable IPC pipe\n");
     printf("  --mix         Capture all audio (skip VALORANT auto-detect)\n");
     printf("  --device NAME Capture from a specific audio device (e.g. \"CABLE\" for VB-CABLE)\n");
+    printf("  --merge-angle DEG  Second-pass cluster merge threshold (default: %.0f)\n", MERGE_ANGLE);
+    printf("  --cluster-angle DEG First-pass cluster threshold (default: %.0f)\n", CLUSTER_ANGLE);
     printf("  --help        Show this message\n");
 }
 
@@ -185,6 +196,12 @@ int main(int argc, char* argv[]) {
         } else if (strcmp(argv[i], "--device") == 0) {
             if (i + 1 < argc)
                 deviceName = argv[++i];
+        } else if (strcmp(argv[i], "--merge-angle") == 0) {
+            if (i + 1 < argc)
+                MERGE_ANGLE = strtof(argv[++i], nullptr);
+        } else if (strcmp(argv[i], "--cluster-angle") == 0) {
+            if (i + 1 < argc)
+                CLUSTER_ANGLE = strtof(argv[++i], nullptr);
         } else if (strcmp(argv[i], "--help") == 0) {
             printUsage();
             return 0;

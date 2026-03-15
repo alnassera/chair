@@ -26,8 +26,8 @@
         <Canvas HorizontalAlignment="Center" VerticalAlignment="Center"
                 Width="0" Height="0" ClipToBounds="False">
             <local:PolarRingControl x:Name="PolarRing"
-                Canvas.Left="-450" Canvas.Top="-450"
-                Width="900" Height="900" />
+                Canvas.Left="-250" Canvas.Top="-250"
+                Width="500" Height="500" />
         </Canvas>
     </Grid>
 </Window>
