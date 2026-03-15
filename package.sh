@@ -47,6 +47,7 @@ cp audio-engine/build/audio-engine.exe "$DIST/"
 cp dist/_overlay/chair-overlay.exe "$DIST/"
 cp launcher/chair.exe "$DIST/"
 cp setup-mono.bat "$DIST/"
+cp setup.bat "$DIST/"
 
 cat > "$DIST/README.txt" << 'EOF'
 CHAIR v1.0 - Audio Direction Overlay for VALORANT
