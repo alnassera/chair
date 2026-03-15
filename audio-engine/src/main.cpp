@@ -14,6 +14,7 @@
 #include <chrono>
 #include <ctime>
 #include <vector>
+#include <algorithm>
 #include <memory>
 
 static std::atomic<bool> g_running{true};
@@ -30,17 +31,6 @@ static BOOL WINAPI consoleHandler(DWORD event) {
         return TRUE;
     }
     return FALSE;
-}
-
-static const char* directionGlyph(AudioEvent::Direction d) {
-    switch (d) {
-        case AudioEvent::HARD_LEFT:  return "<<";
-        case AudioEvent::LEFT:       return "< ";
-        case AudioEvent::CENTER:     return " *";
-        case AudioEvent::RIGHT:      return " >";
-        case AudioEvent::HARD_RIGHT: return ">>";
-    }
-    return " ?";
 }
 
 /// Cluster bands by angular proximity, return one JSON per cluster.
@@ -61,9 +51,6 @@ struct Cluster {
         if (o.maxConf > maxConf) maxConf = o.maxConf;
     }
 };
-
-// Center suppression state
-static float centerGain = 1.0f;
 
 static constexpr float OUTPUT_DEBOUNCE_MS = 100.0f;  // min time between outputs
 static auto lastOutputTime = std::chrono::steady_clock::now();
@@ -97,57 +84,70 @@ static std::string aggregateReadingsToJson(const std::vector<BandReading>& readi
 
     if (gated.empty()) return {};
 
-    // Require at least 2 bands — single band ILD is too noisy to trust
-    if (gated.size() < 2) {
-        printf("  [SKIP] bands=%zu (need 2+)\n", gated.size());
-        return {};
-    }
+    // Sort by angle for clustering
+    std::sort(gated.begin(), gated.end(),
+              [](const GatedReading& a, const GatedReading& b) { return a.angle < b.angle; });
 
-    // Compute weighted mean angle
-    float wSum = 0.0f, wAngleSum = 0.0f;
+    // Cluster by angular proximity
+    std::vector<Cluster> clusters;
     for (auto& g : gated) {
-        wSum      += g.weight;
-        wAngleSum += g.angle * g.weight;
-    }
-    float wMean = wAngleSum / wSum;
-
-    // Check max deviation: if ANY band is far from the mean, it's noise
-    static constexpr float MAX_DEV = 25.0f;
-    float maxDev = 0.0f;
-    for (auto& g : gated) {
-        float d = fabsf(g.angle - wMean);
-        if (d > maxDev) maxDev = d;
-    }
-
-    if (maxDev > MAX_DEV) {
-        printf("  [SKIP] bands=%zu mean=%.1f maxdev=%.1f |", gated.size(), wMean, maxDev);
-        for (auto& g : gated) printf(" %.0f", g.angle);
-        printf("\n");
-        return {};
-    }
-
-    // Bands agree — output single weighted-average cluster
-    Cluster c;
-    for (auto& g : gated) {
-        c.weightSum += g.weight;
-        c.angleSum  += g.angle * g.weight;
-        if (g.db > c.maxDb) c.maxDb = g.db;
-        if (g.conf > c.maxConf) c.maxConf = g.conf;
+        bool merged = false;
+        for (auto& c : clusters) {
+            float cAngle = c.angle();
+            if (fabsf(g.angle - cAngle) < CLUSTER_ANGLE) {
+                c.weightSum += g.weight;
+                c.angleSum  += g.angle * g.weight;
+                if (g.db > c.maxDb) c.maxDb = g.db;
+                if (g.conf > c.maxConf) c.maxConf = g.conf;
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            Cluster c;
+            c.weightSum = g.weight;
+            c.angleSum  = g.angle * g.weight;
+            c.maxDb     = g.db;
+            c.maxConf   = g.conf;
+            clusters.push_back(c);
+        }
     }
 
-    float avgAngle = c.angle();
-    float db = c.maxDb;
+    // Second pass: merge clusters that ended up close
+    for (size_t i = 0; i < clusters.size(); ++i) {
+        for (size_t j = i + 1; j < clusters.size(); ) {
+            if (fabsf(clusters[i].angle() - clusters[j].angle()) < MERGE_ANGLE) {
+                clusters[i].absorb(clusters[j]);
+                clusters.erase(clusters.begin() + j);
+            } else {
+                ++j;
+            }
+        }
+    }
 
-    printf("  [PASS] bands=%zu mean=%.1f maxdev=%.1f |", gated.size(), wMean, maxDev);
-    for (auto& g : gated) printf(" %.0f", g.angle);
+    // Cap at 4 clusters — keep the loudest
+    if (clusters.size() > 4) {
+        std::sort(clusters.begin(), clusters.end(),
+                  [](const Cluster& a, const Cluster& b) { return a.maxDb > b.maxDb; });
+        clusters.resize(4);
+    }
+
+    printf("  [PASS] bands=%zu clusters=%zu |", gated.size(), clusters.size());
+    for (auto& c : clusters) printf(" %.0f°@%.0fdB", c.angle(), c.maxDb);
     printf("\n");
 
     lastOutputTime = now;
 
-    char buf[128];
-    snprintf(buf, sizeof(buf), R"({"a":%.1f,"e":%.1f,"c":%.2f})",
-             avgAngle, db, c.maxConf);
-    return std::string(buf);
+    // Output one JSON per cluster, newline-separated
+    std::string result;
+    for (auto& c : clusters) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), R"({"a":%.1f,"e":%.1f,"c":%.2f})",
+                 c.angle(), c.maxDb, c.maxConf);
+        if (!result.empty()) result += '\n';
+        result += buf;
+    }
+    return result;
 }
 
 static std::string makeSessionDir(const std::string& baseDir) {

@@ -82,6 +82,8 @@ public partial class MainWindow : Window
         _settingsWindow = new SettingsWindow(PolarRing);
 
         StatusDot.Opacity = 1.0;
+        StatusDot.Fill = new System.Windows.Media.SolidColorBrush(
+            System.Windows.Media.Color.FromArgb(180, 0, 200, 0));
         StartPipeListener();
     }
 
