@@ -26,6 +26,19 @@ struct AudioEvent {
     // Spectral features (full-frame, for logging/tuning)
     float centroid;
     float bandwidth;
+
+    // v0.2.6: continuous direction
+    float      angle_deg;     // 0-180
+    float      ild_db;        // raw ILD in dB
+    bool       is_behind;
+};
+
+/// Per-band reading emitted every hop (continuous streaming)
+struct BandReading {
+    uint32_t band;
+    float    angle_deg;   // 0-180
+    float    energy_db;
+    float    confidence;
 };
 
 class AudioAnalyzer {
@@ -38,8 +51,12 @@ public:
 
     void pushSamples(const float* interleavedStereo, uint32_t numFrames);
 
-    /// Returns classified, deduplicated events.
+    /// Process buffered audio. Returns onset events (for terminal/logging).
+    /// Also populates latest band readings accessible via lastBandReadings().
     std::vector<AudioEvent> process();
+
+    /// Per-band angle+energy from the most recent hop (continuous output).
+    const std::vector<BandReading>& lastBandReadings() const { return m_lastReadings; }
 
     uint64_t framesProcessed() const { return m_framesProcessed; }
 
@@ -77,11 +94,15 @@ private:
     uint32_t m_debounceMax;
     uint64_t m_framesProcessed = 0;
 
+    // Continuous band readings (latest hop)
+    std::vector<BandReading> m_lastReadings;
+
     void initBands();
     float bandFlux(Band& band);
-    AudioEvent::Direction estimateDirectionForBand(const Band& band, float& confidence);
+    AudioEvent::Direction estimateDirectionForBand(const Band& band, float& confidence,
+                                                    float& angleDeg, float& ildDb);
     SpectralFeatures computeFrameFeatures(float attackRatio);
 
-    // Deduplication: merge events from same hop with same class+direction
+    // Deduplication: merge events within angular proximity
     std::vector<AudioEvent> deduplicateEvents(std::vector<AudioEvent>& raw);
 };

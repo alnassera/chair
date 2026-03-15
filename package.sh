@@ -6,7 +6,7 @@
 set -e
 cd "$(dirname "$0")"
 
-VERSION="${1:-0.1}"
+VERSION="${1:-1.0}"
 DIST="dist/chair"
 ZIP="dist/chair-v${VERSION}.zip"
 
@@ -35,43 +35,57 @@ cd overlay-ui
 cd ..
 
 echo ""
+echo "=== Building launcher ==="
+gcc -O2 -o launcher/chair.exe launcher/main.c -static
+
+echo ""
 echo "=== Packaging ==="
 rm -rf "$DIST" "$ZIP"
 mkdir -p "$DIST"
 
-echo ""
-echo "=== Building launcher ==="
-gcc -O2 -o launcher/chair.exe launcher/main.c -static
-
 cp audio-engine/build/audio-engine.exe "$DIST/"
 cp dist/_overlay/chair-overlay.exe "$DIST/"
 cp launcher/chair.exe "$DIST/"
+cp setup-mono.bat "$DIST/"
 
 cat > "$DIST/README.txt" << 'EOF'
-CHAIR - Audio Direction Overlay for VALORANT
-=============================================
+CHAIR v1.0 - Audio Direction Overlay for VALORANT
+==================================================
 
-Helps you see where sounds are coming from.
+Visual sound radar for players who are deaf in one ear.
+A ring around your crosshair spikes toward the direction of sounds.
 
-HOW TO USE:
-1. Double-click "chair.exe" — it launches everything for you
-2. Play VALORANT (windowed or borderless fullscreen)
-3. You'll see:
-   - Amber bars on screen edges showing sound direction
-   - Text labels on the side the sound came from (left or right)
+FIRST-TIME SETUP:
+1. Install VB-CABLE: https://vb-audio.com/Cable/
+2. Install Equalizer APO: https://sourceforge.net/projects/equalizerapo/
+   - During install, check ONLY your headphones in the Configurator
+   - Reboot
+3. Double-click "setup-mono.bat" to configure mono headphone output
+4. In Windows Volume Mixer, set VALORANT output to "CABLE Input"
+5. In mmsys.cpl (Win+R) > Recording > CABLE Output > Properties > Listen:
+   - Check "Listen to this device" > select your headphones
+
+RUNNING:
+  chair.exe --device "CABLE"
 
 CONTROLS:
-- Ctrl+Shift+Q : close the overlay
-- Ctrl+C in the CHAIR window to stop everything
+  Ctrl+Shift+Q : close the overlay
+  Ctrl+C       : stop everything
 
-NOTES:
-- Works best with stereo headphones (no spatial audio / Dolby Atmos)
-- The overlay is click-through, it won't interfere with your game
-- If sounds seem backwards, your L/R channels may be swapped
+FLAGS:
+  chair.exe                  Auto-detect VALORANT, capture all audio
+  chair.exe --device "CABLE" Capture from virtual cable (recommended)
+  chair.exe --mix            Skip VALORANT detection, capture all audio
+  chair.exe --log            Save audio clips for debugging
 
-FLAGS (advanced — pass to chair.exe):
-  chair.exe --mix       Capture all audio (skip VALORANT detection)
-  chair.exe --log       Save audio clips for debugging
+REQUIREMENTS:
+  - Windows 10/11
+  - Stereo headphones (disable spatial audio / Dolby Atmos)
+  - VALORANT in Windowed Fullscreen mode
+  - VB-CABLE (free)
+  - Equalizer APO (free)
+
+Full docs: https://github.com/alnassera/chair
 EOF
 
 # Zip it
@@ -82,7 +96,6 @@ if command -v 7z &>/dev/null; then
 elif command -v zip &>/dev/null; then
     zip -r "../$ZIP" chair/
 else
-    # Fallback: use PowerShell
     powershell -Command "Compress-Archive -Path 'chair' -DestinationPath '../$ZIP' -Force"
 fi
 cd ..
@@ -93,4 +106,3 @@ SIZE=$(ls -lh "$ZIP" | awk '{print $5}')
 echo ""
 echo "=== Done ==="
 echo "Package: $ZIP ($SIZE)"
-echo "Give this zip to your friend."

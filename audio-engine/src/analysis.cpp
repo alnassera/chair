@@ -106,7 +106,7 @@ float AudioAnalyzer::bandFlux(Band& band) {
 // ---------------------------------------------------------------------------
 
 AudioEvent::Direction AudioAnalyzer::estimateDirectionForBand(
-        const Band& band, float& confidence) {
+        const Band& band, float& confidence, float& angleDeg, float& ildDb) {
     float eL = 0.0f, eR = 0.0f, cross = 0.0f;
 
     for (uint32_t bin = band.binLo; bin < band.binHi; ++bin) {
@@ -117,6 +117,8 @@ AudioEvent::Direction AudioAnalyzer::estimateDirectionForBand(
 
     if (eL + eR < 1e-10f) {
         confidence = 0.0f;
+        angleDeg = 90.0f;
+        ildDb = 0.0f;
         return AudioEvent::CENTER;
     }
 
@@ -126,13 +128,25 @@ AudioEvent::Direction AudioAnalyzer::estimateDirectionForBand(
     float ildMag = fabsf(ild);
     confidence = fminf(1.0f, ildMag / 6.0f) * fmaxf(0.0f, 1.0f - corr * 0.5f);
 
-    // Positive ILD = louder in left channel = sound from left
-    if (confidence < 0.15f)  return AudioEvent::CENTER;
-    if (ild >  6.0f)         return AudioEvent::HARD_LEFT;
-    if (ild >  2.0f)         return AudioEvent::LEFT;
-    if (ild < -6.0f)         return AudioEvent::HARD_RIGHT;
-    if (ild < -2.0f)         return AudioEvent::RIGHT;
-    return AudioEvent::CENTER;
+    ildDb = ild;
+
+    // Continuous arctan mapping: ild -> left-right angle (0-180)
+    static constexpr float ILD_SCALE = 6.0f;
+    angleDeg = 90.0f + (90.0f * (2.0f / PI)) * atanf(ild / ILD_SCALE);
+
+    if (angleDeg < 0.0f) angleDeg = 0.0f;
+    if (angleDeg > 180.0f) angleDeg = 180.0f;
+
+    // Derive Direction enum from angle for backward compat
+    AudioEvent::Direction dir;
+    if (confidence < 0.25f)      dir = AudioEvent::CENTER;
+    else if (angleDeg >= 155.0f) dir = AudioEvent::HARD_LEFT;
+    else if (angleDeg >= 115.0f) dir = AudioEvent::LEFT;
+    else if (angleDeg >= 65.0f)  dir = AudioEvent::CENTER;
+    else if (angleDeg >= 25.0f)  dir = AudioEvent::RIGHT;
+    else                         dir = AudioEvent::HARD_RIGHT;
+
+    return dir;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,32 +168,38 @@ SpectralFeatures AudioAnalyzer::computeFrameFeatures(float attackRatio) {
 }
 
 // ---------------------------------------------------------------------------
-// Deduplication: merge events from same hop with same class+direction
+// Deduplication: merge events within angular proximity
 // ---------------------------------------------------------------------------
 
 std::vector<AudioEvent> AudioAnalyzer::deduplicateEvents(std::vector<AudioEvent>& raw) {
     if (raw.empty()) return {};
 
+    static constexpr float DEDUP_ANGLE = 15.0f;
+
     std::vector<AudioEvent> deduped;
 
-    // Group by (timestamp_ms, soundClass, direction) — keep highest energy
     for (auto& evt : raw) {
         bool merged = false;
         for (auto& existing : deduped) {
-            if (fabsf(static_cast<float>(evt.timestamp_ms - existing.timestamp_ms)) < 20.0f &&
-                evt.soundClass == existing.soundClass &&
-                evt.direction  == existing.direction) {
-                // Keep the higher-energy one
-                if (evt.energy_db > existing.energy_db) {
-                    existing.energy_db = evt.energy_db;
-                    existing.band      = evt.band;
-                    existing.freqLo    = evt.freqLo;
-                    existing.freqHi    = evt.freqHi;
+            if (fabsf(static_cast<float>(evt.timestamp_ms - existing.timestamp_ms)) < 20.0f) {
+                float diff = fabsf(evt.angle_deg - existing.angle_deg);
+                float angDist = fminf(diff, 360.0f - diff);
+
+                if (angDist < DEDUP_ANGLE) {
+                    if (evt.energy_db > existing.energy_db) {
+                        existing.energy_db = evt.energy_db;
+                        existing.angle_deg = evt.angle_deg;
+                        existing.ild_db    = evt.ild_db;
+                        existing.direction = evt.direction;
+                        existing.band      = evt.band;
+                        existing.freqLo    = evt.freqLo;
+                        existing.freqHi    = evt.freqHi;
+                    }
+                    if (evt.confidence > existing.confidence)
+                        existing.confidence = evt.confidence;
+                    merged = true;
+                    break;
                 }
-                if (evt.confidence > existing.confidence)
-                    existing.confidence = evt.confidence;
-                merged = true;
-                break;
             }
         }
         if (!merged) deduped.push_back(evt);
@@ -195,6 +215,8 @@ std::vector<AudioEvent> AudioAnalyzer::deduplicateEvents(std::vector<AudioEvent>
 std::vector<AudioEvent> AudioAnalyzer::process() {
     std::vector<AudioEvent> rawEvents;
     const uint32_t specSize = m_fftSize / 2 + 1;
+
+    m_lastReadings.clear();
 
     while (m_available >= m_fftSize) {
         uint32_t readStart =
@@ -215,10 +237,31 @@ std::vector<AudioEvent> AudioAnalyzer::process() {
             m_magR[i] = sqrtf(specR[i].r * specR[i].r + specR[i].i * specR[i].i);
         }
 
-        // Per-band onset detection
-        bool anyFired = false;
-        float maxAttackRatio = 0.0f;
+        // Continuous band readings — computed every hop for all bands
+        m_lastReadings.clear();
+        for (uint32_t b = 0; b < m_bands.size(); ++b) {
+            const Band& band = m_bands[b];
 
+            float confidence, angleDeg, ildDb;
+            estimateDirectionForBand(band, confidence, angleDeg, ildDb);
+
+            float energy = 0.0f;
+            for (uint32_t bin = band.binLo; bin < band.binHi; ++bin) {
+                float m = m_magL[bin] + m_magR[bin];
+                energy += m * m;
+            }
+            uint32_t bandBins = band.binHi - band.binLo;
+            float energy_db = 10.0f * log10f(energy / bandBins + 1e-10f);
+
+            BandReading rd{};
+            rd.band       = b;
+            rd.angle_deg  = angleDeg;
+            rd.energy_db  = energy_db;
+            rd.confidence = confidence;
+            m_lastReadings.push_back(rd);
+        }
+
+        // Per-band onset detection (still used for terminal output / logging)
         for (uint32_t b = 0; b < m_bands.size(); ++b) {
             Band& band = m_bands[b];
 
@@ -226,15 +269,13 @@ std::vector<AudioEvent> AudioAnalyzer::process() {
 
             const float alpha = 0.02f;
             band.fluxBaseline = band.fluxBaseline * (1.0f - alpha) + flux * alpha;
-            float threshold = band.fluxBaseline * 3.0f + 0.001f;
+            float threshold = band.fluxBaseline * 4.0f + 0.003f;
 
             if (band.debounceCount > 0) --band.debounceCount;
 
-            float ratio = flux / (threshold + 1e-10f);
-
             if (flux > threshold && band.debounceCount == 0) {
-                float confidence;
-                auto direction = estimateDirectionForBand(band, confidence);
+                float confidence, angleDeg, ildDb;
+                auto direction = estimateDirectionForBand(band, confidence, angleDeg, ildDb);
 
                 float energy = 0.0f;
                 for (uint32_t bin = band.binLo; bin < band.binHi; ++bin) {
@@ -246,36 +287,21 @@ std::vector<AudioEvent> AudioAnalyzer::process() {
 
                 AudioEvent evt{};
                 evt.direction    = direction;
-                evt.soundClass   = SoundClass::UNKNOWN; // classified below
+                evt.soundClass   = SoundClass::UNKNOWN;
                 evt.confidence   = confidence;
                 evt.energy_db    = energy_db;
                 evt.timestamp_ms = static_cast<double>(m_framesProcessed) * 1000.0 / m_sampleRate;
                 evt.band         = b;
                 evt.freqLo       = band.freqLo;
                 evt.freqHi       = band.freqHi;
+                evt.centroid     = 0.0f;
+                evt.bandwidth    = 0.0f;
+                evt.angle_deg    = angleDeg;
+                evt.ild_db       = ildDb;
+                evt.is_behind    = false;
 
                 rawEvents.push_back(evt);
-                anyFired = true;
-                if (ratio > maxAttackRatio) maxAttackRatio = ratio;
-
                 band.debounceCount = m_debounceMax;
-            }
-        }
-
-        // Classify all events from this hop using full-frame features
-        if (anyFired) {
-            auto features = computeFrameFeatures(maxAttackRatio);
-            SoundClass cls = classify(features);
-
-            for (auto it = rawEvents.rbegin(); it != rawEvents.rend(); ++it) {
-                if (it->soundClass == SoundClass::UNKNOWN &&
-                    it->timestamp_ms >= static_cast<double>(m_framesProcessed) * 1000.0 / m_sampleRate - 1.0) {
-                    it->soundClass = cls;
-                    it->centroid   = features.centroid;
-                    it->bandwidth  = features.bandwidth;
-                } else {
-                    break;
-                }
             }
         }
 

@@ -9,6 +9,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <ctime>
@@ -16,6 +17,12 @@
 #include <memory>
 
 static std::atomic<bool> g_running{true};
+
+// Energy gate: bands below this are not sent to overlay (filters ambient noise)
+static constexpr float ENERGY_GATE_DB = -10.0f;    // soft gate center — full pass above, attenuated below
+static constexpr float GATE_KNEE_DB  = 15.0f;     // soft knee width — fades over this range below gate
+static constexpr float CONF_GATE = 0.0f;           // disabled — let everything through
+static constexpr uint32_t MIN_BAND = 2;            // skip bands 0-1 (100Hz-500Hz) — ambient rumble
 
 static BOOL WINAPI consoleHandler(DWORD event) {
     if (event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT || event == CTRL_CLOSE_EVENT) {
@@ -36,28 +43,102 @@ static const char* directionGlyph(AudioEvent::Direction d) {
     return " ?";
 }
 
-static const char* directionName(AudioEvent::Direction d) {
-    switch (d) {
-        case AudioEvent::HARD_LEFT:  return "hard_left";
-        case AudioEvent::LEFT:       return "left";
-        case AudioEvent::CENTER:     return "center";
-        case AudioEvent::RIGHT:      return "right";
-        case AudioEvent::HARD_RIGHT: return "hard_right";
-    }
-    return "unknown";
-}
+/// Cluster bands by angular proximity, return one JSON per cluster.
+/// Supports multiple simultaneous sound sources.
+static constexpr float CLUSTER_ANGLE = 30.0f;
 
-static std::string eventToJson(const AudioEvent& e) {
-    char buf[384];
-    snprintf(buf, sizeof(buf),
-        R"({"class":"%s","dir":"%s","conf":%.2f,"db":%.1f,"t":%.0f,)"
-        R"("band":%u,"freqLo":%.0f,"freqHi":%.0f,"centroid":%.0f,"bandwidth":%.0f})",
-        soundClassName(e.soundClass),
-        directionName(e.direction),
-        e.confidence, e.energy_db, e.timestamp_ms,
-        e.band, e.freqLo, e.freqHi,
-        e.centroid, e.bandwidth);
-    return buf;
+struct Cluster {
+    float weightSum = 0.0f;
+    float angleSum  = 0.0f;
+    float maxDb     = -999.0f;
+    float maxConf   = 0.0f;
+};
+
+// Center suppression state
+static float centerGain = 1.0f;
+
+static std::string aggregateReadingsToJson(const std::vector<BandReading>& readings) {
+    // Gate and collect passing readings
+    struct GatedReading { float angle, db, conf, weight; };
+    std::vector<GatedReading> gated;
+
+    for (const auto& r : readings) {
+        if (r.band < MIN_BAND) continue;
+        if (r.confidence < CONF_GATE && r.energy_db < ENERGY_GATE_DB) continue;
+
+        float gain = 1.0f;
+        if (r.energy_db < ENERGY_GATE_DB) {
+            float below = ENERGY_GATE_DB - r.energy_db;
+            gain = fmaxf(0.0f, 1.0f - (below / GATE_KNEE_DB));
+            gain = gain * gain;
+        }
+        if (gain < 0.01f) continue;
+
+        float gatedDb = r.energy_db + 20.0f * log10f(gain + 1e-10f);
+        float weight = powf(10.0f, r.energy_db / 10.0f) * gain;
+        gated.push_back({r.angle_deg, gatedDb, r.confidence * gain, weight});
+    }
+
+    if (gated.empty()) return {};
+
+    // Cluster by angular proximity
+    std::vector<Cluster> clusters;
+    for (auto& g : gated) {
+        bool merged = false;
+        for (auto& c : clusters) {
+            float cAngle = c.angleSum / c.weightSum;
+            float diff = fabsf(g.angle - cAngle);
+            if (diff > 180.0f) diff = 360.0f - diff;
+            if (diff < CLUSTER_ANGLE) {
+                c.weightSum += g.weight;
+                c.angleSum  += g.angle * g.weight;
+                if (g.db > c.maxDb) c.maxDb = g.db;
+                if (g.conf > c.maxConf) c.maxConf = g.conf;
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            Cluster c;
+            c.weightSum = g.weight;
+            c.angleSum  = g.angle * g.weight;
+            c.maxDb     = g.db;
+            c.maxConf   = g.conf;
+            clusters.push_back(c);
+        }
+    }
+
+    // Build JSON array
+    std::string json;
+    bool first = true;
+    for (auto& c : clusters) {
+        float avgAngle = c.angleSum / c.weightSum;
+
+        // Center suppression
+        static constexpr float CENTER_ZONE = 20.0f;
+        static constexpr float CENTER_DECAY = 0.92f;
+        static constexpr float CENTER_RECOVER = 1.05f;
+
+        float distFromCenter = fabsf(avgAngle - 90.0f);
+        // Only suppress center for the dominant cluster
+        float db = c.maxDb;
+        if (distFromCenter < CENTER_ZONE) {
+            centerGain *= CENTER_DECAY;
+            if (centerGain < 0.05f) centerGain = 0.05f;
+            db += 20.0f * log10f(centerGain + 1e-10f);
+        } else {
+            centerGain *= CENTER_RECOVER;
+            if (centerGain > 1.0f) centerGain = 1.0f;
+        }
+
+        if (!first) json += '\n';
+        char buf[128];
+        snprintf(buf, sizeof(buf), R"({"a":%.1f,"e":%.1f,"c":%.2f})",
+                 avgAngle, db, c.maxConf);
+        json += buf;
+        first = false;
+    }
+    return json;
 }
 
 static std::string makeSessionDir(const std::string& baseDir) {
@@ -83,10 +164,7 @@ static void printUsage() {
 }
 
 int main(int argc, char* argv[]) {
-    // Line-buffer stdout so output appears immediately even when redirected
     setvbuf(stdout, nullptr, _IOLBF, 0);
-
-    // Use Windows console handler instead of signal() — works in PowerShell/cmd
     SetConsoleCtrlHandler(consoleHandler, TRUE);
 
     bool enableLog  = false;
@@ -166,6 +244,7 @@ int main(int argc, char* argv[]) {
     }
 
     printf("[main] Listening... Ctrl+C to quit.\n");
+    printf("[main] Energy gate: %.0f dB\n", ENERGY_GATE_DB);
     if (enableLog) printf("[main] Clip logging ENABLED\n");
     printf("\n");
 
@@ -176,8 +255,6 @@ int main(int argc, char* argv[]) {
     uint64_t totalFrames = 0;
     uint64_t totalEvents = 0;
 
-    // Auto-shutdown: exit after 5s of no events, or if VALORANT closes
-    const auto idleTimeout = std::chrono::seconds(5);
     auto lastEventTime = std::chrono::steady_clock::now();
     auto lastValCheck = std::chrono::steady_clock::now();
     const bool wasValRunning = (targetPid != 0);
@@ -193,24 +270,37 @@ int main(int argc, char* argv[]) {
         if (pipe)   pipe->poll();
 
         auto events = analyzer.process();
-        for (const auto& e : events) {
-            printf("  %s %s   [%+6.1f dB  conf=%.2f  cent=%.0f bw=%.0f  t=%.0f ms]\n",
-                   soundClassShort(e.soundClass),
-                   directionGlyph(e.direction),
-                   e.energy_db, e.confidence,
-                   e.centroid, e.bandwidth,
-                   e.timestamp_ms);
 
-            if (pipe)   pipe->send(eventToJson(e));
-            if (logger) logger->markEvent(e);
+        // Send clustered directions to overlay
+        const auto& readings = analyzer.lastBandReadings();
+        if (!readings.empty()) {
+            auto json = aggregateReadingsToJson(readings);
+            if (!json.empty()) {
+                // Send each cluster as a separate line (pipe is newline-delimited)
+                if (pipe) {
+                    size_t pos = 0;
+                    while (pos < json.size()) {
+                        size_t nl = json.find('\n', pos);
+                        if (nl == std::string::npos) nl = json.size();
+                        pipe->send(json.substr(pos, nl - pos));
+                        pos = nl + 1;
+                    }
+                }
+                printf("  %s\n", json.c_str());
+                lastEventTime = std::chrono::steady_clock::now();
+                ++totalEvents;
+            }
+        }
 
-            lastEventTime = std::chrono::steady_clock::now();
-            ++totalEvents;
+        // Log onset events if clip logger active
+        if (logger) {
+            for (const auto& e : events)
+                logger->markEvent(e);
         }
 
         if (logger) logger->tick();
 
-        // Check if VALORANT has closed (every 2s to avoid spam)
+        // Check if VALORANT has closed (every 2s)
         auto now = std::chrono::steady_clock::now();
         if (wasValRunning && now - lastValCheck > std::chrono::seconds(2)) {
             lastValCheck = now;
